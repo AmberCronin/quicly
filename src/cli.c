@@ -1099,6 +1099,8 @@ static void usage(const char *cmd)
            "  -r [initial-pto]          initial PTO (in milliseconds)\n"
            "  -S [num-speculative-ptos] number of speculative PTOs\n"
            "  -s session-file           file to load / store the session ticket\n"
+           "  --ss <algorithm>          the slowstart algorithm to use; either \"rfc2001\"\n"
+           "                            (default) or \"hybla\"\n"
            "  -u size                   initial size of UDP datagram payload\n"
            "  -U size                   maximum size of UDP datagram payload\n"
            "  -V                        verify peer using the default certificates\n"
@@ -1165,6 +1167,7 @@ int main(int argc, char **argv)
     static const struct option longopts[] = {{"ech-key", required_argument, NULL, 0},
                                              {"ech-configs", required_argument, NULL, 0},
                                              {"disable-ecn", no_argument, NULL, 0},
+                                             {"ss", required_argument, NULL, 0},
                                              {NULL}};
     while ((ch = getopt_long(argc, argv, "a:b:B:c:C:Dd:k:Ee:f:Gi:I:K:l:M:m:NnOp:P:Rr:S:s:u:U:Vvw:W:x:X:y:h", longopts,
                              &opt_index)) != -1) {
@@ -1176,6 +1179,17 @@ int main(int argc, char **argv)
                 ech_setup_configs(optarg);
             } else if (strcmp(longopts[opt_index].name, "disable-ecn") == 0) {
                 ctx.enable_ecn = 0;
+            } else if (strcmp(longopts[opt_index].name, "ss") == 0) {
+                quicly_ss_type_t **ss;
+                for (ss = quicly_ss_all_types; *ss != NULL; ++ss)
+                    if (strcmp((*ss)->name, optarg) == 0)
+                        break;
+                if (*ss != NULL) {
+                    ctx.cc_slowstart = (*ss);
+                } else {
+                    fprintf(stderr, "unknown slowstart algorithm: %s\n", optarg);
+                    exit(1);
+                }
             } else {
                 assert(!"unexpected longname");
             }

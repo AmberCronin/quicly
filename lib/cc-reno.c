@@ -33,9 +33,7 @@ static void reno_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t b
 
     /* Slow start. */
     if (cc->cwnd < cc->ssthresh) {
-        cc->cwnd += bytes;
-        if (cc->cwnd_maximum < cc->cwnd)
-            cc->cwnd_maximum = cc->cwnd;
+        cc->cc_slowstart(cc, loss, bytes, largest_acked, inflight, next_pn, now, max_udp_payload_size);
         return;
     }
     /* Congestion avoidance. */
@@ -86,10 +84,14 @@ void quicly_cc_reno_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t
 
 static void reno_reset(quicly_cc_t *cc, uint32_t initcwnd)
 {
+    // Save the slowstart function pointer from being overwritten by memset
+    void (*cc_slowstart)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
+                         uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size) = cc->cc_slowstart;
     memset(cc, 0, sizeof(quicly_cc_t));
     cc->type = &quicly_cc_type_reno;
     cc->cwnd = cc->cwnd_initial = cc->cwnd_maximum = initcwnd;
     cc->ssthresh = cc->cwnd_minimum = UINT32_MAX;
+    cc->cc_slowstart = cc_slowstart;
 }
 
 static int reno_on_switch(quicly_cc_t *cc)

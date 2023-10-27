@@ -70,9 +70,7 @@ static void cubic_on_acked(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t 
 
     /* Slow start. */
     if (cc->cwnd < cc->ssthresh) {
-        cc->cwnd += bytes;
-        if (cc->cwnd_maximum < cc->cwnd)
-            cc->cwnd_maximum = cc->cwnd;
+        cc->cc_slowstart(cc, loss, bytes, largest_acked, inflight, next_pn, now, max_udp_payload_size);
         return;
     }
 
@@ -161,10 +159,14 @@ static void cubic_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t b
 
 static void cubic_reset(quicly_cc_t *cc, uint32_t initcwnd)
 {
+    // have to do this to avoid having the ss pointer overwritten by memset...
+    void (*cc_slowstart)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
+                         uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size) = cc->cc_slowstart;
     memset(cc, 0, sizeof(quicly_cc_t));
     cc->type = &quicly_cc_type_cubic;
     cc->cwnd = cc->cwnd_initial = cc->cwnd_maximum = initcwnd;
     cc->ssthresh = cc->cwnd_minimum = UINT32_MAX;
+    cc->cc_slowstart = cc_slowstart;
 }
 
 static int cubic_on_switch(quicly_cc_t *cc)
