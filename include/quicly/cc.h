@@ -39,6 +39,13 @@ extern "C" {
 #define QUICLY_MIN_CWND 2
 #define QUICLY_RENO_BETA 0.7
 
+#define SEARCH10_DELV_BIN_COUNT 10
+#define SEARCH10_SENT_BIN_COUNT 25 // 10 + 15 extra bins
+#define SEARCH10_WINDOW_MULTIPLIER (3.5)
+#define SEARCH10_THRESH (0.35)
+
+// #define SEARCH_EXIT
+
 /**
  * Holds pointers to concrete congestion control implementation functions.
  */
@@ -67,11 +74,61 @@ typedef struct st_quicly_cc_t {
      */
     union {
         struct {
-            uint32_t rho_3ls;
-            uint32_t rho;
-            uint32_t cents;
+            double rho;
         } hybla;
-        // Add additional structs for new slow-start algorithm data here
+        struct {
+            /**
+             * Bins for the byte count sent and the byte count delivered (instantiated on init)
+             */
+            uint64_t sent_bins[SEARCH10_SENT_BIN_COUNT];
+            uint64_t delv_bins[SEARCH10_DELV_BIN_COUNT];
+            uint64_t held_sent;
+            uint64_t last_sent;
+            /**
+             * Maintains the endtime of the current bin
+             */
+            int64_t bin_end;
+            /**
+             * Holds the size of each bin (the handshake RTT)
+             */
+            uint32_t bin_time;
+            /**
+             * Holds the last inflight value to calculate the bytes sent between the last ack and the first
+             */
+            uint32_t last_true_inflight;
+            /**
+             * Counts the number of times that the bin has been incremented, so we know when to
+             * start trying to watch for congestion
+             */
+            uint8_t bin_rounds;
+        } search10;
+        struct {
+            uint8_t found;
+            int64_t round_start;
+            int64_t last_ack;
+            int64_t end_seq;
+            uint32_t min_round_rtt;
+            uint8_t samples;
+        } hystart;
+        struct {
+            /**
+             * Bins for the byte count sent and the byte count delivered (instantiated on init)
+             */
+            uint64_t delv_bins[SEARCH10_SENT_BIN_COUNT];
+            /**
+             * Maintains the endtime of the current bin
+             */
+            int64_t bin_end;
+            /**
+             * Holds the size of each bin (the handshake RTT)
+             */
+            uint32_t bin_time;
+            /**
+             * Counts the number of times that the bin has been incremented, so we know when to
+             * start trying to watch for congestion
+             */
+            uint8_t bin_rounds;
+        } search10delv;
     } ss_state;
     /**
      * Packet number indicating end of recovery period, if in recovery.

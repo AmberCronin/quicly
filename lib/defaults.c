@@ -61,7 +61,8 @@ const quicly_context_t quicly_spec_context = {NULL,                             
                                               NULL,
                                               &quicly_default_crypto_engine,
                                               &quicly_default_init_cc,
-                                              &quicly_default_ss};
+                                              &quicly_default_ss,
+                                              QUICLY_MAX_DATA_GROWTH_NONE};
 
 /* profile with a focus on reducing latency for the HTTP use case */
 const quicly_context_t quicly_performant_context = {NULL,                                                 /* tls */
@@ -93,7 +94,8 @@ const quicly_context_t quicly_performant_context = {NULL,                       
                                                     NULL,
                                                     &quicly_default_crypto_engine,
                                                     &quicly_default_init_cc,
-                                                    &quicly_default_ss};
+                                                    &quicly_default_ss,
+                                                    QUICLY_MAX_DATA_GROWTH_NONE};
 
 /**
  * The context of the default CID encryptor.  All the contexts being used here are ECB ciphers and therefore stateless - they can be
@@ -317,6 +319,7 @@ static int default_stream_scheduler_do_send(quicly_stream_scheduler_t *self, qui
         }
         /* send! */
         if ((ret = quicly_send_stream(stream, s)) != 0) {
+            //printf("stream scheduler send error\n");
             /* FIXME Stop quicly_send_stream emitting SENDBUF_FULL (happens when CWND is congested). Otherwise, we need to make
              * adjustments to the scheduler after popping a stream */
             if (ret == QUICLY_ERROR_SENDBUF_FULL) {

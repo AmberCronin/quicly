@@ -9,6 +9,9 @@ extern "C" {
 #include "quicly/cc.h"
 #include "quicly/constants.h"
 #include <stdint.h>
+#include <stdbool.h>
+
+extern bool search_exit;
 
 /**
  * Holds pointers to concrete congestion control implementation functions.
@@ -24,7 +27,7 @@ struct st_quicly_ss_type_t {
                uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size);
 };
 
-extern quicly_ss_type_t quicly_ss_type_rfc2001, quicly_ss_type_hybla;
+extern quicly_ss_type_t quicly_ss_type_rfc2001, quicly_ss_type_hybla, quicly_ss_type_search10, quicly_ss_type_search10_interp, quicly_ss_type_hystart, quicly_ss_type_search10_delv;
 
 extern quicly_ss_type_t* quicly_ss_all_types[];
 

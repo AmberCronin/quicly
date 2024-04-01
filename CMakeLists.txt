@@ -70,6 +70,10 @@ SET(QUICLY_LIBRARY_FILES
     lib/sendstate.c
     lib/ss-rfc2001.c
     lib/ss-hybla.c
+    lib/ss-hystart.c
+    lib/ss-search10.c
+    lib/ss-search10-interp.c
+    lib/ss-search10-delv.c
     lib/sentmap.c
     lib/streambuf.c
     ${CMAKE_CURRENT_BINARY_DIR}/quicly-tracer.h)

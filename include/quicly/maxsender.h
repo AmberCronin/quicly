@@ -55,6 +55,11 @@ typedef struct st_quicly_maxsender_sent_t {
     uint64_t value : 63;
 } quicly_maxsender_sent_t;
 
+typedef enum {
+    QUICLY_MAX_DATA_GROWTH_NONE,
+    QUICLY_MAX_DATA_GROWTH_HYBLA
+} quicly_max_data_growth_t;
+
 static void quicly_maxsender_init(quicly_maxsender_t *m, int64_t initial_value);
 static void quicly_maxsender_dispose(quicly_maxsender_t *m);
 static void quicly_maxsender_request_transmit(quicly_maxsender_t *m);
