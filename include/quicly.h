@@ -378,7 +378,7 @@ struct st_quicly_context_t {
     /**
      * set the slowstart function for the connection
      */
-    struct st_quicly_ss_type_t *cc_slowstart;
+    quicly_ss_type_t *cc_slowstart;
     /**
      * selects the max data growth mode
      */

@@ -34,6 +34,7 @@
 #include "quicly/defaults.h"
 #include "quicly/sentmap.h"
 #include "quicly/frame.h"
+#include "quicly/ss.h"
 #include "quicly/streambuf.h"
 #include "quicly/cc.h"
 #if QUICLY_USE_DTRACE
@@ -2260,8 +2261,10 @@ static quicly_conn_t *create_connection(quicly_context_t *ctx, uint32_t protocol
     conn->egress.path_challenge.tail_ref = &conn->egress.path_challenge.head;
     conn->egress.ack_frequency.update_at = INT64_MAX;
     conn->egress.send_ack_at = INT64_MAX;
-    conn->egress.cc.cc_slowstart = conn->super.ctx->cc_slowstart->ss;
     conn->super.ctx->init_cc->cb(conn->super.ctx->init_cc, &conn->egress.cc, initcwnd, conn->stash.now);
+    if (conn->egress.cc.type->cc_slowstart != NULL) {
+        conn->egress.cc.type->cc_slowstart->slowstart = conn->super.ctx->cc_slowstart;
+    }
     conn->egress.ecn.state = conn->super.ctx->enable_ecn ? QUICLY_ECN_PROBING : QUICLY_ECN_OFF;
     quicly_retire_cid_init(&conn->egress.retire_cid);
     quicly_linklist_init(&conn->egress.pending_streams.blocked.uni);

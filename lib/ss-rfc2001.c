@@ -13,3 +13,5 @@ void ss_rfc2001(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint
 quicly_ss_type_t quicly_ss_type_rfc2001 = { "rfc2001", ss_rfc2001 };
 
 quicly_ss_type_t* quicly_ss_all_types[] = { &quicly_ss_type_rfc2001, &quicly_ss_type_hybla, &quicly_ss_type_hystart, &quicly_ss_type_search10, &quicly_ss_type_search10_interp, &quicly_ss_type_search10_delv, NULL };
+
+struct st_quicly_variable_ss active_slowstart = {&quicly_ss_type_rfc2001};

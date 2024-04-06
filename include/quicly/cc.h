@@ -57,11 +57,6 @@ typedef struct st_quicly_cc_t {
      */
     quicly_cc_type_t *type;
     /**
-     * Function called by (*cc_on_acked)(...) when in slow-start (cwd < ssthresh)
-     */
-    void (*cc_slowstart)(struct st_quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                        uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size);
-    /**
      * Current congestion window.
      */
     uint32_t cwnd;
@@ -128,6 +123,7 @@ typedef struct st_quicly_cc_t {
              * start trying to watch for congestion
              */
             uint8_t bin_rounds;
+            uint32_t initial_rtt;
         } search10delv;
     } ss_state;
     /**
@@ -249,6 +245,10 @@ struct st_quicly_cc_type_t {
      * Switches the underlying algorithm of `cc` to that of `cc_switch`, returning a boolean if the operation was successful.
      */
     int (*cc_switch)(quicly_cc_t *cc);
+    /*
+     * Defines a variable slowstart callback
+     */
+    struct st_quicly_variable_ss *cc_slowstart;
 };
 
 /**
