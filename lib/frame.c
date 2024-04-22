@@ -61,7 +61,6 @@ uint8_t *quicly_encode_ack_frame(uint8_t *dst, uint8_t *dst_end, quicly_ranges_t
         if (range_index-- == 0)
             break;
         WRITE_BLOCK(ranges->ranges[range_index].end, ranges->ranges[range_index + 1].start);
-        //printf("gap ack written: range_index = %lu [%lu, %lu]\n", range_index, ranges->ranges[range_index].end, ranges->ranges[range_index + 1].start);
     }
 
     if (frame_type == QUICLY_FRAME_TYPE_ACK_ECN) {
@@ -90,9 +89,6 @@ int quicly_decode_ack_frame(const uint8_t **src, const uint8_t *end, quicly_ack_
         goto Error;
     if ((num_gaps = quicly_decodev(src, end)) == UINT64_MAX)
         goto Error;
-    
-    //if (num_gaps > 0)
-        //printf("handling gap ack: largest acked: %lu\n", frame->largest_acknowledged);
 
     if ((ack_range = quicly_decodev(src, end)) == UINT64_MAX)
         goto Error;

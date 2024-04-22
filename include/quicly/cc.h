@@ -40,10 +40,10 @@ extern "C" {
 #define QUICLY_MIN_CWND 2
 #define QUICLY_RENO_BETA 0.7
 
-#define SEARCH10_DELV_BIN_COUNT 10
-#define SEARCH10_SENT_BIN_COUNT 25 // 10 + 15 extra bins
-#define SEARCH10_WINDOW_MULTIPLIER (3.5)
-#define SEARCH10_THRESH (0.35)
+#define SEARCH20_DELV_BIN_COUNT 10
+#define SEARCH20_SENT_BIN_COUNT 25 // 10 + 15 extra bins
+#define SEARCH20_WINDOW_MULTIPLIER (3.5)
+#define SEARCH20_THRESH (0.35)
 
 // #define SEARCH_EXIT
 
@@ -84,13 +84,13 @@ typedef struct st_quicly_cc_t {
             /**
              * Bins for the byte count sent and the byte count delivered (instantiated on init)
              */
-            uint64_t delv_bins[SEARCH10_SENT_BIN_COUNT];
+            uint64_t delv_bins[SEARCH20_SENT_BIN_COUNT];
             /**
-             * Maintains the endtime of the current bin
+             * Maintains the end time of the current bin
              */
             int64_t bin_end;
             /**
-             * Holds the size of each bin (the handshake RTT)
+             * Holds the size of each bin (based on the handshake RTT)
              */
             uint32_t bin_time;
             /**
@@ -98,8 +98,7 @@ typedef struct st_quicly_cc_t {
              * start trying to watch for congestion
              */
             uint8_t bin_rounds;
-            uint32_t initial_rtt;
-        } search20d;
+        } search20delv;
     } ss_state;
     /**
      * Packet number indicating end of recovery period, if in recovery.

@@ -11,19 +11,17 @@
 
 
 static void ss_hystart_reset(quicly_cc_t *cc, int64_t now, uint64_t next_pn) {
-	printf("HYSTART: RESET, %ld, %lu\n", now, next_pn);
 	cc->ss_state.hystart.round_start = cc->ss_state.hystart.last_ack = now; // we only have ms resolution
 	cc->ss_state.hystart.end_seq = next_pn; // next packet we will send
 	cc->ss_state.hystart.min_round_rtt = ~0U; // max uint32_t
 	cc->ss_state.hystart.samples = 0;
 }
 
-// This code is, again, heavily based on Linux's CUBIC/HyStart implementation with several functional differences to make it
+// This code is heavily based on Linux's CUBIC/HyStart implementation with several functional differences to make it
 // work with the constraints we've been given by Quicly. 
 void ss_hystart(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
                         uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size)
 {
-	printf("HYSTART: ACK, %ld, %lu, %lu, %ld\n", now, largest_acked, next_pn, cc->ss_state.hystart.end_seq);
 	// RTT available at loss->rtt.latest
 	// dMin (min observed RTT) available at loss->rtt.minimum
 	// this isn't exactly sequence number comparison, but it also ain't exactly NOT sequence number comparison...
@@ -41,12 +39,10 @@ void ss_hystart(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint
 		// hystart_ack_delay(sk) maxes at 1ms if there is packet spacing happening
 		// but we don't have usec so i dont know how much it matters
 		uint32_t threshold = loss->rtt.minimum >> 1;
-		printf("HYSTART: TRAIN, %ld, %u\n", now, threshold);
 
 		if (now - cc->ss_state.hystart.round_start > threshold) {
 			cc->ss_state.hystart.found = 1;
 			cc->ssthresh = cc->cwnd;
-			printf("HYSTART: TRAINEXIT, %ld, %u\n", now, cc->ssthresh);
 		}
 	}
 
@@ -59,12 +55,10 @@ void ss_hystart(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint
 	}
 	else {
 		uint32_t threshold = loss->rtt.minimum + MIN(QUICLY_HYSTART_DELAY_MAX, MAX(QUICLY_HYSTART_DELAY_MIN, loss->rtt.minimum >> 3));
-		printf("HYSTART: DELAY, %ld, %u\n", now, threshold);
 
 		if (cc->ss_state.hystart.min_round_rtt > threshold) {
 			cc->ss_state.hystart.found = 1;
 			cc->ssthresh = cc->cwnd;
-			printf("HYSTART: DELAYEXIT, %ld, %u\n", now, cc->ssthresh);
 		}
 	}
 

@@ -3,11 +3,6 @@
 #include <stdint.h>
 #include <math.h>
 
-#define QUICLY_HYBLA_RTT0 (25)
-#define QUICLY_HYBLA_RHO_LIM (16) // rho limited to prevent integer overflow from affecting performance
-
-// Based very heavily on the Linux kernel's implementation
-
 static void recalc_rho(quicly_cc_t *cc, const quicly_loss_t *loss) {
 	// RTT in msec
 	// Linux here uses us instead of ms for their rho calculations, which gives them more accurate information about

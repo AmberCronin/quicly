@@ -907,9 +907,8 @@ static void resched_stream_data(quicly_stream_t *stream)
 
 static int should_send_max_data(quicly_conn_t *conn)
 {
-    uint32_t new_value_scale = quicly_max_data_value_scale(conn);
     return quicly_maxsender_should_send_max(&conn->ingress.max_data.sender, conn->ingress.max_data.bytes_consumed,
-                                            (uint32_t)conn->super.ctx->transport_params.max_data * new_value_scale, 512);
+                                            (uint32_t)conn->super.ctx->transport_params.max_data, 512);
 }
 
 static int should_send_max_stream_data(quicly_stream_t *stream)
@@ -1313,15 +1312,6 @@ void quicly_get_max_data(quicly_conn_t *conn, uint64_t *send_permitted, uint64_t
         *sent = conn->egress.max_data.sent;
     if (consumed != NULL)
         *consumed = conn->ingress.max_data.bytes_consumed;
-}
-
-inline uint32_t quicly_max_data_value_scale(quicly_conn_t *conn)
-{
-    uint32_t new_value_scale = conn->egress.loss.rtt.latest / 25;
-    if(conn->super.ctx->growth_mode == QUICLY_MAX_DATA_GROWTH_NONE || new_value_scale < 1) {
-        new_value_scale = 1;
-    }
-    return new_value_scale;
 }
 
 static void update_idle_timeout(quicly_conn_t *conn, int is_in_receive)
@@ -3671,7 +3661,6 @@ static int send_control_frames_of_stream(quicly_stream_t *stream, quicly_send_co
                                                 on_ack_max_stream_data)) != 0)
             return ret;
         /* send */
-        printf("new max stream data value: %lu\n", new_value);
         s->dst = quicly_encode_max_stream_data_frame(s->dst, stream->stream_id, new_value);
         /* register ack */
         sent->data.max_stream_data.stream_id = stream->stream_id;
@@ -3883,7 +3872,6 @@ int quicly_send_stream(quicly_stream_t *stream, quicly_send_context_t *s)
             if (new_bytes > stream->conn->egress.max_data.permitted - stream->conn->egress.max_data.sent) {
                 size_t max_stream_data =
                     stream->sendstate.size_inflight + stream->conn->egress.max_data.permitted - stream->conn->egress.max_data.sent;
-                printf("max stream data: %lu\n", max_stream_data);
                 len = max_stream_data - off;
             }
         }
@@ -4789,23 +4777,7 @@ static int send_other_control_frames(quicly_conn_t *conn, quicly_send_context_t 
         quicly_sent_t *sent;
         if ((ret = allocate_ack_eliciting_frame(conn, s, QUICLY_MAX_DATA_FRAME_CAPACITY, &sent, on_ack_max_data)) != 0)
             return ret;
-        // Essentially, implement Hybla scaling to the outer data limiting
-        uint32_t new_value_scale = quicly_max_data_value_scale(conn);
-        uint64_t new_value = conn->ingress.max_data.bytes_consumed + new_value_scale * conn->super.ctx->transport_params.max_data;
-        printf("new max data value: %lu = %lu + %u * %lu\n", new_value, conn->ingress.max_data.bytes_consumed, new_value_scale, conn->super.ctx->transport_params.max_data);
-        uint64_t buffered_from = conn->ingress.max_data.bytes_consumed;
-        uint32_t window_size = (uint32_t)conn->super.ctx->transport_params.max_data;
-        uint32_t update_ratio = 512;
-        int64_t threshold = buffered_from + ((int64_t)window_size * update_ratio) / 1024;
-        quicly_maxsender_t *m = &conn->ingress.max_data.sender;
-        
-        printf("max sender calculation: buffered_from = %lu, window_size = %u, update_ratio = 512; threshold = %lu, m->sel_val = %lu (%s)\n",
-                    buffered_from,
-                    window_size,
-                    threshold,
-                    (m->num_inflight != 0 ? m->max_committed : m->max_acked),
-                    m->num_inflight != 0 ? "inflight>0" : "inflight=0");
-        
+        uint64_t new_value = conn->ingress.max_data.bytes_consumed + conn->super.ctx->transport_params.max_data;        
         s->dst = quicly_encode_max_data_frame(s->dst, new_value);
         quicly_maxsender_record(&conn->ingress.max_data.sender, new_value, &sent->data.max_data.args);
         ++conn->super.stats.num_frames_sent.max_data;
@@ -5686,8 +5658,6 @@ static int handle_data_blocked_frame(quicly_conn_t *conn, struct st_quicly_handl
     quicly_data_blocked_frame_t frame;
     int ret;
 
-    printf("handling data blocked frame\n");
-
     if ((ret = quicly_decode_data_blocked_frame(&state->src, state->end, &frame)) != 0)
         return ret;
 
@@ -5868,7 +5838,6 @@ static int handle_max_data_frame(quicly_conn_t *conn, struct st_quicly_handle_pa
     if (frame.max_data <= conn->egress.max_data.permitted)
         return 0;
     conn->egress.max_data.permitted = frame.max_data;
-    printf("max data permitted: %lu\n", conn->egress.max_data.permitted);
     conn->egress.data_blocked = QUICLY_SENDER_STATE_NONE; /* DATA_BLOCKED has not been sent for the new limit */
 
     return 0;
