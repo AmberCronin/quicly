@@ -1237,6 +1237,7 @@ int main(int argc, char **argv)
                     ctx.cc_slowstart = (*ss);
                 } else {
                     fprintf(stderr, "unknown slowstart algorithm: %s\n", optarg);
+                }
             } else if (strcmp(longopts[opt_index].name, "disregard-app-limited") == 0) {
                 ctx.respect_app_limited = 0;
             } else if (strcmp(longopts[opt_index].name, "jumpstart-default") == 0) {

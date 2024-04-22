@@ -118,4 +118,4 @@ void ss_search20_delv(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes
 	return;
 }
 
-quicly_ss_type_t quicly_ss_type_search10_delv = { "search", ss_search20_delv };
+quicly_ss_type_t quicly_ss_type_search20_delv = { "search", ss_search20_delv };

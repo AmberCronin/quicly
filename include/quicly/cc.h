@@ -45,6 +45,9 @@ extern "C" {
 #define SEARCH20_WINDOW_MULTIPLIER (3.5)
 #define SEARCH20_THRESH (0.35)
 
+#define QUICLY_HYBLA_RTT0 (25)
+#define QUICLY_HYBLA_RHO_LIM (16)
+
 // #define SEARCH_EXIT
 
 /**
