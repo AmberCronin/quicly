@@ -34,6 +34,7 @@ extern "C" {
 #include <stdint.h>
 #include <string.h>
 #include "quicly/constants.h"
+#include "quicly/pacer.h"
 #include "quicly/loss.h"
 
 #define QUICLY_MIN_CWND 2
@@ -72,32 +73,6 @@ typedef struct st_quicly_cc_t {
             double rho;
         } hybla;
         struct {
-            /**
-             * Bins for the byte count sent and the byte count delivered (instantiated on init)
-             */
-            uint64_t sent_bins[SEARCH10_SENT_BIN_COUNT];
-            uint64_t delv_bins[SEARCH10_DELV_BIN_COUNT];
-            uint64_t held_sent;
-            uint64_t last_sent;
-            /**
-             * Maintains the endtime of the current bin
-             */
-            int64_t bin_end;
-            /**
-             * Holds the size of each bin (the handshake RTT)
-             */
-            uint32_t bin_time;
-            /**
-             * Holds the last inflight value to calculate the bytes sent between the last ack and the first
-             */
-            uint32_t last_true_inflight;
-            /**
-             * Counts the number of times that the bin has been incremented, so we know when to
-             * start trying to watch for congestion
-             */
-            uint8_t bin_rounds;
-        } search10;
-        struct {
             uint8_t found;
             int64_t round_start;
             int64_t last_ack;
@@ -124,7 +99,7 @@ typedef struct st_quicly_cc_t {
              */
             uint8_t bin_rounds;
             uint32_t initial_rtt;
-        } search10delv;
+        } search20d;
     } ss_state;
     /**
      * Packet number indicating end of recovery period, if in recovery.
@@ -187,6 +162,23 @@ typedef struct st_quicly_cc_t {
         } cubic;
     } state;
     /**
+     * jumpstart state
+     */
+    struct {
+        /**
+         * first packet number in jumpstart
+         */
+        uint64_t enter_pn;
+        /**
+         * packet number following the last packet in jumpstart
+         */
+        uint64_t exit_pn;
+        /**
+         * amount of bytes acked for packets sent in jumpstart
+         */
+        uint32_t bytes_acked;
+    } jumpstart;
+    /**
      * Initial congestion window.
      */
     uint32_t cwnd_initial;
@@ -194,6 +186,14 @@ typedef struct st_quicly_cc_t {
      * Congestion window at the end of slow start.
      */
     uint32_t cwnd_exiting_slow_start;
+    /**
+     * the time at which we exitted slow start (or INT64_MAX)
+     */
+    int64_t exit_slow_start_at;
+    /**
+     * Congestion window at the end of the unvalidated phase of jumpstart.
+     */
+    uint32_t cwnd_exiting_jumpstart;
     /**
      * Minimum congestion window during the connection.
      */
@@ -225,7 +225,7 @@ struct st_quicly_cc_type_t {
      * Called when a packet is newly acknowledged.
      */
     void (*cc_on_acked)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
-                        uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size);
+                        int cc_limited, uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size);
     /**
      * Called when a packet is detected as lost.
      * @param bytes    bytes declared lost, or zero iff ECN_CE is observed
@@ -249,6 +249,10 @@ struct st_quicly_cc_type_t {
      * Defines a variable slowstart callback
      */
     struct st_quicly_variable_ss *cc_slowstart;
+    /**
+     *
+     */
+    void (*cc_jumpstart)(quicly_cc_t *cc, uint32_t cwnd, uint64_t next_pn);
 };
 
 /**
@@ -279,6 +283,13 @@ void quicly_cc_reno_on_sent(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t
  */
 static void quicly_cc__update_ecn_episodes(quicly_cc_t *cc, uint32_t lost_bytes, uint64_t lost_pn);
 
+static void quicly_cc_jumpstart_reset(quicly_cc_t *cc);
+static int quicly_cc_in_jumpstart(quicly_cc_t *cc);
+static void quicly_cc_jumpstart_enter(quicly_cc_t *cc, uint32_t jump_cwnd, uint64_t next_pn);
+static void quicly_cc_jumpstart_on_acked(quicly_cc_t *cc, int in_recovery, uint32_t bytes, uint64_t largest_acked,
+                                         uint32_t inflight, uint64_t next_pn);
+static void quicly_cc_jumpstart_on_first_loss(quicly_cc_t *cc, uint64_t lost_pn);
+
 /* inline definitions */
 
 inline void quicly_cc__update_ecn_episodes(quicly_cc_t *cc, uint32_t lost_bytes, uint64_t lost_pn)
@@ -293,6 +304,69 @@ inline void quicly_cc__update_ecn_episodes(quicly_cc_t *cc, uint32_t lost_bytes,
     if (lost_bytes != 0 && cc->episode_by_ecn) {
         --cc->num_ecn_loss_episodes;
         cc->episode_by_ecn = 0;
+    }
+}
+
+inline void quicly_cc_jumpstart_reset(quicly_cc_t *cc)
+{
+    cc->jumpstart.enter_pn = UINT64_MAX;
+    cc->jumpstart.exit_pn = UINT64_MAX;
+    cc->jumpstart.bytes_acked = 0;
+}
+
+inline int quicly_cc_in_jumpstart(quicly_cc_t *cc)
+{
+    return cc->jumpstart.enter_pn < UINT64_MAX && cc->jumpstart.exit_pn == UINT64_MAX;
+}
+
+inline void quicly_cc_jumpstart_enter(quicly_cc_t *cc, uint32_t jump_cwnd, uint64_t next_pn)
+{
+    assert(cc->cwnd < jump_cwnd);
+
+    /* retain state to be restored upon loss */
+    cc->jumpstart.enter_pn = next_pn;
+
+    /* adjust */
+    cc->cwnd = jump_cwnd;
+}
+
+inline void quicly_cc_jumpstart_on_acked(quicly_cc_t *cc, int in_recovery, uint32_t bytes, uint64_t largest_acked,
+                                         uint32_t inflight, uint64_t next_pn)
+{
+    int is_jumpstart_ack = cc->jumpstart.enter_pn <= largest_acked && largest_acked < cc->jumpstart.exit_pn;
+
+    /* remember the amount of bytes acked for the packets sent in jumpstart */
+    if (is_jumpstart_ack)
+        cc->jumpstart.bytes_acked += bytes;
+
+    if (in_recovery) {
+        /* Propotional Rate Reduction: if a loss is observed due to jumpstart, CWND is adjusted so that it would become bytes that
+         * passed through to the client during the jumpstart phase of exactly 1 RTT, when the last ACK for the jumpstart phase is
+         * received */
+        if (is_jumpstart_ack && cc->cwnd < cc->jumpstart.bytes_acked)
+            cc->cwnd = cc->jumpstart.bytes_acked;
+        return;
+    }
+
+    /* when receiving the first ack for jumpstart, stop jumpstart and go back to slow start, adopting current inflight as cwnd */
+    if (cc->jumpstart.exit_pn == UINT64_MAX && cc->jumpstart.enter_pn <= largest_acked) {
+        assert(cc->cwnd < cc->ssthresh);
+        cc->cwnd = inflight;
+        cc->cwnd_exiting_jumpstart = cc->cwnd;
+        cc->jumpstart.exit_pn = next_pn;
+    }
+}
+
+inline void quicly_cc_jumpstart_on_first_loss(quicly_cc_t *cc, uint64_t lost_pn)
+{
+    if (cc->jumpstart.enter_pn != UINT64_MAX && lost_pn < cc->jumpstart.exit_pn) {
+        assert(cc->cwnd < cc->ssthresh);
+        /* CWND is set to the amount of bytes ACKed during the jump start phase plus the value before jump start */
+        cc->cwnd = cc->jumpstart.bytes_acked;
+        if (cc->cwnd < cc->cwnd_initial)
+            cc->cwnd = cc->cwnd_initial;
+        if (cc->jumpstart.exit_pn == UINT64_MAX)
+            cc->jumpstart.exit_pn = lost_pn;
     }
 }
 
