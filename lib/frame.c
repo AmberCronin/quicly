@@ -20,7 +20,6 @@
  * IN THE SOFTWARE.
  */
 #include <assert.h>
-#include <stdio.h>
 #include <string.h>
 #include "quicly/frame.h"
 

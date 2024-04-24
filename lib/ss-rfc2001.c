@@ -1,5 +1,4 @@
 #include "quicly/ss.h"
-#include <stdio.h>
 
 /*
 "Default" slow start algorithm implementing exponential doubling, as defined by

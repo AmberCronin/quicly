@@ -1,6 +1,5 @@
 #include "quicly/ss.h"
 #include <stdint.h>
-#include <stdio.h>
 
 /*
 This slow start algorithm implements the SEARCH algorithm, as derived in

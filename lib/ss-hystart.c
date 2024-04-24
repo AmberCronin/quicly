@@ -1,6 +1,5 @@
 #include "quicly/ss.h"
 #include <stdint.h>
-#include <stdio.h>
 
 #define QUICLY_HYSTART_MIN_SAMPLES (8)
 #define QUICLY_HYSTART_MIN_SSTHRESH (16)
