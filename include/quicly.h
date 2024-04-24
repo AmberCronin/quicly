@@ -398,10 +398,6 @@ struct st_quicly_context_t {
      */
     quicly_ss_type_t *cc_slowstart;
     /**
-     * selects the max data growth mode
-     */
-    quicly_max_data_growth_t growth_mode;
-    /**
      * optional refcount callback
      */
     quicly_update_open_count_t *update_open_count;
@@ -1024,10 +1020,6 @@ int quicly_get_delivery_rate(quicly_conn_t *conn, quicly_rate_t *delivery_rate);
  *
  */
 void quicly_get_max_data(quicly_conn_t *conn, uint64_t *send_permitted, uint64_t *sent, uint64_t *consumed);
-/**
- *
- */
-uint32_t quicly_max_data_value_scale(quicly_conn_t *conn);
 /**
  *
  */

@@ -4778,7 +4778,7 @@ static int send_other_control_frames(quicly_conn_t *conn, quicly_send_context_t 
         quicly_sent_t *sent;
         if ((ret = allocate_ack_eliciting_frame(conn, s, QUICLY_MAX_DATA_FRAME_CAPACITY, &sent, on_ack_max_data)) != 0)
             return ret;
-        uint64_t new_value = conn->ingress.max_data.bytes_consumed + conn->super.ctx->transport_params.max_data;        
+        uint64_t new_value = conn->ingress.max_data.bytes_consumed + conn->super.ctx->transport_params.max_data;
         s->dst = quicly_encode_max_data_frame(s->dst, new_value);
         quicly_maxsender_record(&conn->ingress.max_data.sender, new_value, &sent->data.max_data.args);
         ++conn->super.stats.num_frames_sent.max_data;
