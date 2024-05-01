@@ -20,6 +20,7 @@
  * IN THE SOFTWARE.
  */
 #include "quicly/cc.h"
+#include "quicly/defaults.h"
 #include "quicly.h"
 
 /* TODO: Avoid increase if sender was application limited. */
@@ -134,6 +135,8 @@ static void reno_init(quicly_init_cc_t *self, quicly_cc_t *cc, uint32_t initcwnd
     reno_reset(cc, initcwnd);
 }
 
+struct st_quicly_variable_ss reno_active_slowstart = {&quicly_default_ss};
+
 quicly_cc_type_t quicly_cc_type_reno = {"reno",
                                         &quicly_cc_reno_init,
                                         reno_on_acked,
@@ -141,7 +144,7 @@ quicly_cc_type_t quicly_cc_type_reno = {"reno",
                                         quicly_cc_reno_on_persistent_congestion,
                                         quicly_cc_reno_on_sent,
                                         reno_on_switch,
-                                        &active_slowstart,
+                                        &reno_active_slowstart,
                                         quicly_cc_jumpstart_enter};
 quicly_init_cc_t quicly_cc_reno_init = {reno_init};
 

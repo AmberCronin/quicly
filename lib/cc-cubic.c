@@ -22,8 +22,10 @@
  */
 #include <math.h>
 #include "quicly/cc.h"
+#include "quicly/defaults.h"
 #include "quicly.h"
 #include "quicly/pacer.h"
+#include "quicly/ss.h"
 
 #define QUICLY_MIN_CWND 2
 
@@ -204,7 +206,9 @@ static void cubic_init(quicly_init_cc_t *self, quicly_cc_t *cc, uint32_t initcwn
     cubic_reset(cc, initcwnd);
 }
 
+struct st_quicly_variable_ss cubic_active_slowstart = {&quicly_default_ss};
+
 quicly_cc_type_t quicly_cc_type_cubic = {"cubic",         &quicly_cc_cubic_init,          cubic_on_acked,
                                          cubic_on_lost,   cubic_on_persistent_congestion, cubic_on_sent,
-                                         cubic_on_switch, &active_slowstart, quicly_cc_jumpstart_enter};
+                                         cubic_on_switch, &cubic_active_slowstart, quicly_cc_jumpstart_enter};
 quicly_init_cc_t quicly_cc_cubic_init = {cubic_init};
