@@ -6,18 +6,18 @@ This slow start algorithm implements the SEARCH algorithm, as derived in
 https://web.cs.wpi.edu/~claypool/papers/search-wowmom-24/
 */
 
-void ss_search20_delv_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, int64_t now);
+void ss_search_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, int64_t now);
 
-void ss_search20_delv_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, int64_t now)
+void ss_search_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, int64_t now)
 {
 	// Handy pointers to the cc struct
-	uint64_t* delv = cc->ss_state.search20delv.delv_bins;
-	int64_t* bin_end = &cc->ss_state.search20delv.bin_end;
-	uint32_t* bin_time = &cc->ss_state.search20delv.bin_time;
-	uint8_t* bin_rounds = &cc->ss_state.search20delv.bin_rounds;
+	uint64_t* delv = cc->ss_state.search.delv_bins;
+	int64_t* bin_end = &cc->ss_state.search.bin_end;
+	uint32_t* bin_time = &cc->ss_state.search.bin_time;
+	uint32_t* bin_rounds = &cc->ss_state.search.bin_rounds;
 
 	// bin time is the size of each of the sent/delv bins
-	*bin_time = (loss->rtt.latest * SEARCH20_WINDOW_MULTIPLIER) / (SEARCH20_DELV_BIN_COUNT);
+	*bin_time = MAX((loss->rtt.latest * SEARCH20_WINDOW_MULTIPLIER) / (SEARCH20_DELV_BIN_COUNT), 1);
 	*bin_end = now + *bin_time;
 	delv[0] = 0;
 	*bin_rounds = 0;
@@ -25,18 +25,18 @@ void ss_search20_delv_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t
 
 // bytes is the number of bytes acked in the last ACK frame
 // inflight is sentmap->bytes_in_flight + bytes
-void ss_search20_delv(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
+void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
                         uint64_t next_pn, int64_t now, uint32_t max_udp_payload_size)
 {
 	// Handy pointers to the cc struct
-	uint64_t* delv = cc->ss_state.search20delv.delv_bins;
-	int64_t* bin_end = &cc->ss_state.search20delv.bin_end;
-	uint32_t* bin_time = &cc->ss_state.search20delv.bin_time;
-	uint8_t* bin_rounds = &cc->ss_state.search20delv.bin_rounds;
+	uint64_t* delv = cc->ss_state.search.delv_bins;
+	int64_t* bin_end = &cc->ss_state.search.bin_end;
+	uint32_t* bin_time = &cc->ss_state.search.bin_time;
+	uint32_t* bin_rounds = &cc->ss_state.search.bin_rounds;
 
 	// struct initializations, everything else important has already been reset to 0
 	if(*bin_time == 0) {
-		ss_search20_delv_reset(cc, loss, bytes, now);
+		ss_search_reset(cc, loss, bytes, now);
 	}
 
 	// bin_shift is the number of bins to shift backwards, based on the latest RTT
@@ -54,7 +54,7 @@ void ss_search20_delv(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes
 	// This is likely handled by the prior binroll while loop, but that might add unnecessary latency
 	// dependant on how long ago the last packet was acknowledged.
 	if (((now - *bin_end) / *bin_time) > SEARCH20_SENT_BIN_COUNT) {
-		ss_search20_delv_reset(cc, loss, bytes, now);
+		ss_search_reset(cc, loss, bytes, now);
 	}
 	
 
@@ -117,4 +117,4 @@ void ss_search20_delv(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes
 	return;
 }
 
-quicly_ss_type_t quicly_ss_type_search20_delv = { "search", ss_search20_delv };
+quicly_ss_type_t quicly_ss_type_search = { "search", ss_search };

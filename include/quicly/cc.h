@@ -100,8 +100,8 @@ typedef struct st_quicly_cc_t {
              * Counts the number of times that the bin has been incremented, so we know when to
              * start trying to watch for congestion
              */
-            uint8_t bin_rounds;
-        } search20delv;
+            uint32_t bin_rounds;
+        } search;
     } ss_state;
     /**
      * Packet number indicating end of recovery period, if in recovery.
