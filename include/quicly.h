@@ -1272,6 +1272,8 @@ void quicly_send_datagram_frames(quicly_conn_t *conn, ptls_iovec_t *datagrams, s
  * Sets CC to the specified type. Returns a boolean indicating if the operation was successful.
  */
 int quicly_set_cc(quicly_conn_t *conn, quicly_cc_type_t *cc);
+
+int quicly_set_ss(quicly_conn_t *conn, quicly_ss_type_t *ss);
 /**
  *
  */
