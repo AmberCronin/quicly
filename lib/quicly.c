@@ -509,14 +509,6 @@ struct st_quicly_handle_payload_state_t {
     uint64_t frame_type;
 };
 
-struct st_ptls_salt_t {
-    uint8_t initial[20];
-    struct {
-        uint8_t key[PTLS_AES128_KEY_SIZE];
-        uint8_t iv[PTLS_AESGCM_IV_SIZE];
-    } retry;
-};
-
 static void crypto_stream_receive(quicly_stream_t *stream, size_t off, const void *src, size_t len);
 
 static const quicly_stream_callbacks_t crypto_stream_callbacks = {quicly_streambuf_destroy, quicly_streambuf_egress_shift,
@@ -536,9 +528,9 @@ static const quicly_transport_parameters_t default_transport_params = {.max_udp_
                                                                        .active_connection_id_limit =
                                                                            QUICLY_DEFAULT_ACTIVE_CONNECTION_ID_LIMIT};
 
-static const struct st_ptls_salt_t *get_salt(uint32_t protocol_version)
+const quicly_salt_t *quicly_get_salt(uint32_t protocol_version)
 {
-    static const struct st_ptls_salt_t
+    static const quicly_salt_t
         v1 = {.initial = {0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
                           0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a},
               .retry = {.key = {0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e},
@@ -643,7 +635,7 @@ static inline uint8_t get_epoch(uint8_t first_byte)
 
 static ptls_aead_context_t *create_retry_aead(quicly_context_t *ctx, uint32_t protocol_version, int is_enc)
 {
-    const struct st_ptls_salt_t *salt = get_salt(protocol_version);
+    const quicly_salt_t *salt = quicly_get_salt(protocol_version);
     assert(salt != NULL);
 
     ptls_cipher_suite_t *algo = get_aes128gcmsha256(ctx);
@@ -1437,7 +1429,7 @@ static int scheduler_can_send(quicly_conn_t *conn)
     }
 
     /* scheduler would never have data to send, until application keys become available */
-    if (conn->application == NULL)
+    if (conn->application == NULL || conn->application->cipher.egress.key.aead == NULL)
         return 0;
 
     int conn_is_saturated = !(conn->egress.max_data.sent < conn->egress.max_data.permitted);
@@ -1928,6 +1920,9 @@ static int promote_path(quicly_conn_t *conn, size_t path_index)
 
     do_delete_path(conn, path);
 
+    /* rearm the loss timer, now that the RTT estimate has been changed */
+    setup_next_send(conn);
+
     return 0;
 }
 
@@ -2039,22 +2034,31 @@ void quicly_free(quicly_conn_t *conn)
     free(conn);
 }
 
-static int setup_initial_key(struct st_quicly_cipher_context_t *ctx, ptls_cipher_suite_t *cs, const void *master_secret,
-                             const char *label, int is_enc, quicly_conn_t *conn)
+static int calc_initial_key(ptls_cipher_suite_t *cs, uint8_t *traffic_secret, const void *master_secret, const char *label)
 {
-    uint8_t aead_secret[PTLS_MAX_DIGEST_SIZE];
+    return ptls_hkdf_expand_label(cs->hash, traffic_secret, cs->hash->digest_size,
+                                  ptls_iovec_init(master_secret, cs->hash->digest_size), label, ptls_iovec_init(NULL, 0), NULL);
+}
+
+int quicly_calc_initial_keys(ptls_cipher_suite_t *cs, uint8_t *ingress, uint8_t *egress, ptls_iovec_t cid, int is_client,
+                             ptls_iovec_t salt)
+{
+    static const char *labels[2] = {"client in", "server in"};
+    uint8_t master_secret[PTLS_MAX_DIGEST_SIZE];
     int ret;
 
-    if ((ret = ptls_hkdf_expand_label(cs->hash, aead_secret, cs->hash->digest_size,
-                                      ptls_iovec_init(master_secret, cs->hash->digest_size), label, ptls_iovec_init(NULL, 0),
-                                      NULL)) != 0)
+    /* extract master secret */
+    if ((ret = ptls_hkdf_extract(cs->hash, master_secret, salt, cid)) != 0)
         goto Exit;
-    if ((ret = setup_cipher(conn, QUICLY_EPOCH_INITIAL, is_enc, &ctx->header_protection, &ctx->aead, cs->aead, cs->hash,
-                            aead_secret)) != 0)
+
+    /* calc secrets */
+    if (ingress != NULL && (ret = calc_initial_key(cs, ingress, master_secret, labels[is_client])) != 0)
+        goto Exit;
+    if (egress != NULL && (ret = calc_initial_key(cs, egress, master_secret, labels[!is_client])) != 0)
         goto Exit;
 
 Exit:
-    ptls_clear_memory(aead_secret, sizeof(aead_secret));
+    ptls_clear_memory(master_secret, sizeof(master_secret));
     return ret;
 }
 
@@ -2065,34 +2069,34 @@ static int setup_initial_encryption(ptls_cipher_suite_t *cs, struct st_quicly_ci
                                     struct st_quicly_cipher_context_t *egress, ptls_iovec_t cid, int is_client, ptls_iovec_t salt,
                                     quicly_conn_t *conn)
 {
-    static const char *labels[2] = {"client in", "server in"};
-    uint8_t secret[PTLS_MAX_DIGEST_SIZE];
+    struct {
+        uint8_t ingress[PTLS_MAX_DIGEST_SIZE];
+        uint8_t egress[PTLS_MAX_DIGEST_SIZE];
+    } secrets;
     int ret;
 
-    /* extract master secret */
-    if ((ret = ptls_hkdf_extract(cs->hash, secret, salt, cid)) != 0)
+    if ((ret = quicly_calc_initial_keys(cs, ingress != NULL ? secrets.ingress : NULL, egress != NULL ? secrets.egress : NULL, cid,
+                                        is_client, salt)) != 0)
         goto Exit;
 
-    /* create aead contexts */
-    if (ingress != NULL && (ret = setup_initial_key(ingress, cs, secret, labels[is_client], 0, conn)) != 0)
+    if (ingress != NULL && (ret = setup_cipher(conn, QUICLY_EPOCH_INITIAL, 0, &ingress->header_protection, &ingress->aead, cs->aead,
+                                               cs->hash, secrets.ingress)) != 0)
         goto Exit;
-    if (egress != NULL && (ret = setup_initial_key(egress, cs, secret, labels[!is_client], 1, conn)) != 0) {
-        if (ingress != NULL)
-            dispose_cipher(ingress);
+    if (egress != NULL && (ret = setup_cipher(conn, QUICLY_EPOCH_INITIAL, 1, &egress->header_protection, &egress->aead, cs->aead,
+                                              cs->hash, secrets.egress)) != 0)
         goto Exit;
-    }
 
 Exit:
-    ptls_clear_memory(secret, sizeof(secret));
+    ptls_clear_memory(&secrets, sizeof(secrets));
     return ret;
 }
 
 static int reinstall_initial_encryption(quicly_conn_t *conn, int err_code_if_unknown_version)
 {
-    const struct st_ptls_salt_t *salt;
+    const quicly_salt_t *salt;
 
     /* get salt */
-    if ((salt = get_salt(conn->super.version)) == NULL)
+    if ((salt = quicly_get_salt(conn->super.version)) == NULL)
         return err_code_if_unknown_version;
 
     /* dispose existing context */
@@ -2530,6 +2534,8 @@ static quicly_conn_t *create_connection(quicly_context_t *ctx, uint32_t protocol
     conn->crypto.tls = tls;
     if (new_path(conn, 0, remote_addr, local_addr) != 0) {
         unlock_now(conn);
+        if (pacer != NULL)
+            free(pacer);
         ptls_free(tls);
         free(conn);
         return NULL;
@@ -2685,7 +2691,7 @@ int quicly_connect(quicly_conn_t **_conn, quicly_context_t *ctx, const char *ser
                    ptls_handshake_properties_t *handshake_properties, const quicly_transport_parameters_t *resumed_transport_params,
                    void *appdata)
 {
-    const struct st_ptls_salt_t *salt;
+    const quicly_salt_t *salt;
     quicly_conn_t *conn = NULL;
     const quicly_cid_t *server_cid;
     ptls_buffer_t buf;
@@ -2693,12 +2699,11 @@ int quicly_connect(quicly_conn_t **_conn, quicly_context_t *ctx, const char *ser
     size_t max_early_data_size = 0;
     int ret;
 
-    if ((salt = get_salt(ctx->initial_version)) == NULL) {
+    if ((salt = quicly_get_salt(ctx->initial_version)) == NULL) {
         if ((ctx->initial_version & 0x0f0f0f0f) == 0x0a0a0a0a) {
             /* greasing version, use our own greasing salt */
-            static const struct st_ptls_salt_t grease_salt = {.initial = {0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe,
-                                                                          0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad,
-                                                                          0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef}};
+            static const quicly_salt_t grease_salt = {.initial = {0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad,
+                                                                  0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef}};
             salt = &grease_salt;
         } else {
             ret = QUICLY_ERROR_INVALID_INITIAL_VERSION;
@@ -3647,8 +3652,13 @@ static int commit_send_packet(quicly_conn_t *conn, quicly_send_context_t *s, int
         quicly_encode16(s->dst_payload_from - QUICLY_SEND_PN_SIZE - 2, length);
         switch (*s->target.first_byte_at & QUICLY_PACKET_TYPE_BITMASK) {
         case QUICLY_PACKET_TYPE_INITIAL:
+            conn->super.stats.num_packets.initial_sent++;
+            break;
+        case QUICLY_PACKET_TYPE_0RTT:
+            conn->super.stats.num_packets.zero_rtt_sent++;
+            break;
         case QUICLY_PACKET_TYPE_HANDSHAKE:
-            conn->super.stats.num_packets.initial_handshake_sent++;
+            conn->super.stats.num_packets.handshake_sent++;
             break;
         }
     } else {
@@ -5192,7 +5202,7 @@ static int send_other_control_frames(quicly_conn_t *conn, quicly_send_context_t 
 
 static int do_send(quicly_conn_t *conn, quicly_send_context_t *s)
 {
-    int restrict_sending = 0, ack_only = 0, ret;
+    int restrict_sending = 0, ack_only = 0, ret = 0;
     size_t min_packets_to_send = 0, orig_bytes_inflight = 0;
 
     /* handle timeouts */
@@ -5213,10 +5223,10 @@ static int do_send(quicly_conn_t *conn, quicly_send_context_t *s)
         conn->super.stats.num_handshake_timeouts++;
         goto CloseNow;
     }
-    if (conn->super.stats.num_packets.initial_handshake_sent > conn->super.ctx->max_initial_handshake_packets) {
-        QUICLY_PROBE(INITIAL_HANDSHAKE_PACKET_EXCEED, conn, conn->stash.now, conn->super.stats.num_packets.initial_handshake_sent);
-        QUICLY_LOG_CONN(initial_handshake_packet_exceed, conn,
-                        { PTLS_LOG_ELEMENT_UNSIGNED(num_packets, conn->super.stats.num_packets.initial_handshake_sent); });
+    uint64_t initial_handshake_sent = conn->super.stats.num_packets.initial_sent + conn->super.stats.num_packets.handshake_sent;
+    if (initial_handshake_sent > conn->super.ctx->max_initial_handshake_packets) {
+        QUICLY_PROBE(INITIAL_HANDSHAKE_PACKET_EXCEED, conn, conn->stash.now, initial_handshake_sent);
+        QUICLY_LOG_CONN(initial_handshake_packet_exceed, conn, { PTLS_LOG_ELEMENT_UNSIGNED(num_packets, initial_handshake_sent); });
         conn->super.stats.num_initial_handshake_exceeded++;
         goto CloseNow;
     }
@@ -5281,11 +5291,13 @@ static int do_send(quicly_conn_t *conn, quicly_send_context_t *s)
      *  * quicly running as a client sends either a Handshake probe (or data) if the handshake keys are available, or else an
      *    Initial probe (or data).
      *  * quicly running as a server sends both Initial and Handshake probes (or data) if the corresponding keys are available. */
-    if ((ret = send_handshake_flow(conn, QUICLY_EPOCH_INITIAL, s, ack_only,
-                                   min_packets_to_send != 0 && (!quicly_is_client(conn) || conn->handshake == NULL))) != 0)
-        goto Exit;
-    if ((ret = send_handshake_flow(conn, QUICLY_EPOCH_HANDSHAKE, s, ack_only, min_packets_to_send != 0)) != 0)
-        goto Exit;
+    if (s->path_index == 0) {
+        if ((ret = send_handshake_flow(conn, QUICLY_EPOCH_INITIAL, s, ack_only,
+                                       min_packets_to_send != 0 && (!quicly_is_client(conn) || conn->handshake == NULL))) != 0)
+            goto Exit;
+        if ((ret = send_handshake_flow(conn, QUICLY_EPOCH_HANDSHAKE, s, ack_only, min_packets_to_send != 0)) != 0)
+            goto Exit;
+    }
 
     /* setup 0-RTT or 1-RTT send context (as the availability of the two epochs are mutually exclusive, we can try 1-RTT first as an
      * optimization), then send application data if that succeeds */
@@ -5445,7 +5457,7 @@ Exit:
         if (conn->application == NULL || conn->application->super.unacked_count == 0)
             conn->egress.send_ack_at = INT64_MAX; /* we have sent ACKs for every epoch (or before address validation) */
         int can_send_stream_data = scheduler_can_send(conn);
-        update_send_alarm(conn, can_send_stream_data, 1);
+        update_send_alarm(conn, can_send_stream_data, s->path_index == 0);
         update_ratemeter(conn, can_send_stream_data && conn->super.remote.address_validation.validated &&
                                    (s->num_datagrams == s->max_datagrams ||
                                     conn->egress.loss.sentmap.bytes_in_flight >= conn->egress.cc.cwnd ||
@@ -5551,7 +5563,8 @@ int quicly_send(quicly_conn_t *conn, quicly_address_t *dest, quicly_address_t *s
      * more than one path at a time) */
     if (conn->egress.send_probe_at <= conn->stash.now) {
         for (s.path_index = 1; s.path_index < PTLS_ELEMENTSOF(conn->paths); ++s.path_index) {
-            if (conn->paths[s.path_index] == NULL || conn->stash.now < conn->paths[s.path_index]->path_challenge.send_at)
+            if (conn->paths[s.path_index] == NULL || !(conn->stash.now >= conn->paths[s.path_index]->path_challenge.send_at ||
+                                                       conn->paths[s.path_index]->path_response.send_))
                 continue;
             if (conn->paths[s.path_index]->path_challenge.num_sent > conn->super.ctx->max_probe_packets) {
                 delete_path(conn, s.path_index);
@@ -5567,6 +5580,7 @@ int quicly_send(quicly_conn_t *conn, quicly_address_t *dest, quicly_address_t *s
             }
             if ((ret = do_send(conn, &s)) != 0)
                 goto Exit;
+            assert(conn->stash.now < conn->paths[s.path_index]->path_challenge.send_at);
             if (s.num_datagrams != 0)
                 break;
         }
@@ -5580,7 +5594,7 @@ int quicly_send(quicly_conn_t *conn, quicly_address_t *dest, quicly_address_t *s
         ret = 0;
     }
 
-    assert_consistency(conn, 1);
+    assert_consistency(conn, s.path_index == 0);
 
 Exit:
     if (s.path_index == 0)
@@ -5605,10 +5619,10 @@ size_t quicly_send_close_invalid_token(quicly_context_t *ctx, uint32_t protocol_
                                        ptls_iovec_t src_cid, const char *err_desc, void *datagram)
 {
     struct st_quicly_cipher_context_t egress = {};
-    const struct st_ptls_salt_t *salt;
+    const quicly_salt_t *salt;
 
     /* setup keys */
-    if ((salt = get_salt(protocol_version)) == NULL)
+    if ((salt = quicly_get_salt(protocol_version)) == NULL)
         return SIZE_MAX;
     if (setup_initial_encryption(get_aes128gcmsha256(ctx), NULL, &egress, src_cid, 0,
                                  ptls_iovec_init(salt->initial, sizeof(salt->initial)), NULL) != 0)
@@ -6201,8 +6215,8 @@ static int handle_path_challenge_frame(quicly_conn_t *conn, struct st_quicly_han
     if ((ret = quicly_decode_path_challenge_frame(&state->src, state->end, &frame)) != 0)
         return ret;
 
-    QUICLY_PROBE(PATH_CHALLENGE_RECEIVE, conn, conn->stash.now, frame.data, sizeof(frame.data));
-    QUICLY_LOG_CONN(path_challenge_receive, conn, { PTLS_LOG_ELEMENT_HEXDUMP(data, frame.data, sizeof(frame.data)); });
+    QUICLY_PROBE(PATH_CHALLENGE_RECEIVE, conn, conn->stash.now, frame.data, QUICLY_PATH_CHALLENGE_DATA_LEN);
+    QUICLY_LOG_CONN(path_challenge_receive, conn, { PTLS_LOG_ELEMENT_HEXDUMP(data, frame.data, QUICLY_PATH_CHALLENGE_DATA_LEN); });
 
     /* schedule the emission of PATH_RESPONSE frame */
     struct st_quicly_conn_path_t *path = conn->paths[state->path_index];
@@ -6221,14 +6235,15 @@ static int handle_path_response_frame(quicly_conn_t *conn, struct st_quicly_hand
     if ((ret = quicly_decode_path_challenge_frame(&state->src, state->end, &frame)) != 0)
         return ret;
 
-    QUICLY_PROBE(PATH_RESPONSE_RECEIVE, conn, conn->stash.now, frame.data, sizeof(frame.data));
-    QUICLY_LOG_CONN(path_response_receive, conn, { PTLS_LOG_ELEMENT_HEXDUMP(data, frame.data, sizeof(frame.data)); });
+    QUICLY_PROBE(PATH_RESPONSE_RECEIVE, conn, conn->stash.now, frame.data, QUICLY_PATH_CHALLENGE_DATA_LEN);
+    QUICLY_LOG_CONN(path_response_receive, conn, { PTLS_LOG_ELEMENT_HEXDUMP(data, frame.data, QUICLY_PATH_CHALLENGE_DATA_LEN); });
 
     struct st_quicly_conn_path_t *path = conn->paths[state->path_index];
 
     if (ptls_mem_equal(path->path_challenge.data, frame.data, QUICLY_PATH_CHALLENGE_DATA_LEN)) {
         /* Path validation succeeded, stop sending PATH_CHALLENGEs. Active path might become changed in `quicly_receive`. */
         path->path_challenge.send_at = INT64_MAX;
+        recalc_send_probe_at(conn);
         conn->super.stats.num_paths.validated += 1;
     }
 
@@ -6822,7 +6837,7 @@ int quicly_accept(quicly_conn_t **conn, quicly_context_t *ctx, struct sockaddr *
                   quicly_decoded_packet_t *packet, quicly_address_token_plaintext_t *address_token,
                   const quicly_cid_plaintext_t *new_cid, ptls_handshake_properties_t *handshake_properties, void *appdata)
 {
-    const struct st_ptls_salt_t *salt;
+    const quicly_salt_t *salt;
     struct {
         struct st_quicly_cipher_context_t ingress, egress;
         int alive;
@@ -6838,7 +6853,7 @@ int quicly_accept(quicly_conn_t **conn, quicly_context_t *ctx, struct sockaddr *
         ret = QUICLY_ERROR_PACKET_IGNORED;
         goto Exit;
     }
-    if ((salt = get_salt(packet->version)) == NULL) {
+    if ((salt = quicly_get_salt(packet->version)) == NULL) {
         ret = QUICLY_ERROR_PACKET_IGNORED;
         goto Exit;
     }
@@ -6916,6 +6931,7 @@ int quicly_accept(quicly_conn_t **conn, quicly_context_t *ctx, struct sockaddr *
 
     /* handle the input; we ignore is_ack_only, we consult if there's any output from TLS in response to CH anyways */
     (*conn)->super.stats.num_packets.received += 1;
+    (*conn)->super.stats.num_packets.initial_received += 1;
     if (packet->ecn != 0)
         (*conn)->super.stats.num_packets.received_ecn_counts[get_ecn_index_from_bits(packet->ecn)] += 1;
     (*conn)->super.stats.num_bytes.received += packet->datagram_size;
@@ -6929,7 +6945,9 @@ int quicly_accept(quicly_conn_t **conn, quicly_context_t *ctx, struct sockaddr *
 Exit:
     if (*conn != NULL) {
         if (ret == 0) {
-            (*conn)->super.state = QUICLY_STATE_CONNECTED;
+            /* if CONNECTION_CLOSE was found and the state advanced to DRAINING, we need to retain that state */
+            if ((*conn)->super.state < QUICLY_STATE_CONNECTED)
+                (*conn)->super.state = QUICLY_STATE_CONNECTED;
         } else {
             initiate_close(*conn, ret, offending_frame_type, "");
             ret = 0;
@@ -6994,8 +7012,10 @@ int quicly_receive(quicly_conn_t *conn, struct sockaddr *dest_addr, struct socka
         if (conn->paths[path_index] != NULL && compare_socket_address(src_addr, &conn->paths[path_index]->address.remote.sa) == 0)
             break;
     if (path_index == PTLS_ELEMENTSOF(conn->paths) &&
-        conn->super.stats.num_paths.validation_failed >= conn->super.ctx->max_path_validation_failures)
-        return QUICLY_ERROR_PACKET_IGNORED;
+        conn->super.stats.num_paths.validation_failed >= conn->super.ctx->max_path_validation_failures) {
+        ret = QUICLY_ERROR_PACKET_IGNORED;
+        goto Exit;
+    }
 
     /* add unconditionally, as packet->datagram_size is set only for the first packet within the UDP datagram */
     conn->super.stats.num_bytes.received += packet->datagram_size;
@@ -7162,7 +7182,20 @@ int quicly_receive(quicly_conn_t *conn, struct sockaddr *dest_addr, struct socka
     conn->super.stats.num_packets.received += 1;
     conn->paths[path_index]->packet_last_received = conn->super.stats.num_packets.received;
     conn->paths[path_index]->num_packets.received += 1;
-    if (packet->ecn != 0)
+    if (QUICLY_PACKET_IS_LONG_HEADER(packet->octets.base[0])) {
+        switch (packet->octets.base[0] & QUICLY_PACKET_TYPE_BITMASK) {
+        case QUICLY_PACKET_TYPE_INITIAL:
+            conn->super.stats.num_packets.initial_received += 1;
+            break;
+        case QUICLY_PACKET_TYPE_0RTT:
+            conn->super.stats.num_packets.zero_rtt_received += 1;
+            break;
+        case QUICLY_PACKET_TYPE_HANDSHAKE:
+            conn->super.stats.num_packets.handshake_received += 1;
+            break;
+        }
+    }
+     if (packet->ecn != 0)
         conn->super.stats.num_packets.received_ecn_counts[get_ecn_index_from_bits(packet->ecn)] += 1;
 
     /* state updates, that are triggered by the receipt of a packet */
