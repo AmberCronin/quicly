@@ -44,6 +44,9 @@ extern "C" {
 #define QUICLY_SEARCH_TOTAL_BIN_COUNT (25)              // number of search sent bytes bins
 #define QUICLY_SEARCH_WINDOW_MULTIPLIER (3.5)           // search multiplier for window calculation
 #define QUICLY_SEARCH_THRESH (0.35)                     // search threshold to exit slow start phase
+#define QUICLY_SEARCH_BIN_TYPE uint16_t                 // datatype used for bin storage
+#define QUICLY_SEARCH_BITSHIFT (1)                      // space-saving bitshift for smaller bins
+#define QUICLY_SEARCH_RESET_LIMIT (3)                   // number of bins that can be missed before triggering a reset
 
 /**
  * Holds pointers to concrete congestion control implementation functions.
@@ -71,7 +74,7 @@ typedef struct st_quicly_cc_t {
             /**
              * Bins for the byte count sent and the byte count delivered (instantiated on init)
              */
-            uint64_t delv_bins[QUICLY_SEARCH_TOTAL_BIN_COUNT];
+            QUICLY_SEARCH_BIN_TYPE delv_bins[QUICLY_SEARCH_TOTAL_BIN_COUNT];
             /**
              * Maintains the end time of the current bin
              */
@@ -84,7 +87,7 @@ typedef struct st_quicly_cc_t {
              * Counts the number of times that the bin has been incremented, so we know when to
              * start trying to watch for congestion
              */
-            uint32_t bin_rounds;
+            uint16_t bin_rounds;
         } search;
     } ss_state;
     /**
