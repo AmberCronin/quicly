@@ -62,6 +62,8 @@ void ss_search_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes,
     *bin_rounds = 0;
 }
 
+#define SEARCH_BIN(delv, index) (delv[(index) % (QUICLY_SEARCH_TOTAL_BIN_COUNT)])
+
 // bytes is the number of bytes acked in the last ACK frame
 // inflight is sentmap->bytes_in_flight + bytes
 void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
@@ -82,7 +84,8 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
     // non-application-limited delay will trigger a protocol reset if in-flight packets
     // are not acked (typical case, not handled by us).
     if (((now - *bin_end) / *bin_time) >= QUICLY_SEARCH_RESET_LIMIT) {
-        ss_search_reset(cc, loss, bytes + delv[(*bin_rounds % (QUICLY_SEARCH_TOTAL_BIN_COUNT))], now);
+        ss_search_reset(cc, loss, bytes + SEARCH_BIN(delv, *bin_rounds), now);
+        
     }
 
     // bin_shift is the number of bins to shift backwards, based on the latest RTT
@@ -99,7 +102,7 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
     // perform prior binrolls before updating the latest bin to run SEARCH on if necessary
     while((now - *bin_time) > (*bin_end)) {
         // initialize the next bin with the final value of the previous
-        delv[((*bin_rounds + 1) % QUICLY_SEARCH_TOTAL_BIN_COUNT)] = delv[(*bin_rounds % (QUICLY_SEARCH_TOTAL_BIN_COUNT))];
+        SEARCH_BIN(delv, *bin_rounds + 1) = SEARCH_BIN(delv, *bin_rounds);
         *bin_end += *bin_time;
         *bin_rounds += 1;
     }
@@ -112,10 +115,10 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
         if((*bin_rounds) >= ((QUICLY_SEARCH_DELV_BIN_COUNT) + bin_shift)
             && bin_shift < (QUICLY_SEARCH_TOTAL_BIN_COUNT - QUICLY_SEARCH_DELV_BIN_COUNT)) {
             // do SEARCH
-            double shift_delv_sum = delv[(*bin_rounds - bin_shift) % (QUICLY_SEARCH_TOTAL_BIN_COUNT)] \
-                - delv[(*bin_rounds - bin_shift - QUICLY_SEARCH_DELV_BIN_COUNT) % (QUICLY_SEARCH_TOTAL_BIN_COUNT)];
-            double delv_sum = delv[(*bin_rounds) % (QUICLY_SEARCH_TOTAL_BIN_COUNT)] \
-                - delv[(*bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT) % (QUICLY_SEARCH_TOTAL_BIN_COUNT)];
+            double shift_delv_sum = SEARCH_BIN(delv, *bin_rounds - bin_shift) \
+                - SEARCH_BIN(delv, *bin_rounds - bin_shift - QUICLY_SEARCH_DELV_BIN_COUNT);
+            double delv_sum = SEARCH_BIN(delv, *bin_rounds) \
+                - SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT);
 
             if (shift_delv_sum >= 1) {
                 shift_delv_sum *= 2;
@@ -136,7 +139,7 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
             /* TODO: Double bin_time and consolidate for high RTT operation */
         }
 
-        delv[((*bin_rounds + 1) % QUICLY_SEARCH_TOTAL_BIN_COUNT)] = delv[(*bin_rounds % (QUICLY_SEARCH_TOTAL_BIN_COUNT))];
+        SEARCH_BIN(delv, *bin_rounds + 1) = SEARCH_BIN(delv, *bin_rounds);
         *bin_end += *bin_time;
         *bin_rounds += 1;
     }
@@ -147,7 +150,7 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
     // does not seem to guarantee a match with conn->egress.max_data.sent (see loss.c)
     //
     // we include a right-bitshift to reduce the amount of data being stored in the bin
-    delv[(*bin_rounds % (QUICLY_SEARCH_TOTAL_BIN_COUNT))] += (bytes >> QUICLY_SEARCH_BITSHIFT);
+    SEARCH_BIN(delv, *bin_rounds) += bytes;
 
     // perform standard SS doubling
     cc->cwnd += bytes;
