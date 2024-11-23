@@ -53,6 +53,7 @@ void ss_search_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes,
     int64_t* bin_end = &cc->ss_state.search.bin_end;
     uint32_t* bin_time = &cc->ss_state.search.bin_time;
     uint16_t* bin_rounds = &cc->ss_state.search.bin_rounds;
+    uint8_t* bin_bitshifts = &cc->ss_state.search.bin_bitshift;
 
     // bin time is the size of each of the sent/delv bins
     uint32_t tmp_bin_time = (loss->rtt.latest * QUICLY_SEARCH_WINDOW_MULTIPLIER) / (QUICLY_SEARCH_DELV_BIN_COUNT);
@@ -60,6 +61,7 @@ void ss_search_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes,
     *bin_end = now + *bin_time;
     delv[0] = bytes;
     *bin_rounds = 0;
+    *bin_bitshifts = 0;
 }
 
 #define SEARCH_BIN(delv, index) (delv[(index) % (QUICLY_SEARCH_TOTAL_BIN_COUNT)])
@@ -74,17 +76,18 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
     int64_t* bin_end = &cc->ss_state.search.bin_end;
     uint32_t* bin_time = &cc->ss_state.search.bin_time;
     uint16_t* bin_rounds = &cc->ss_state.search.bin_rounds;
+    uint8_t* bin_bitshifts = &cc->ss_state.search.bin_bitshift;
 
     // struct initializations, everything else important has already been reset to 0
     if(*bin_time == 0) {
-        ss_search_reset(cc, loss, bytes, now);
+        ss_search_reset(cc, loss, (bytes >> *bin_bitshifts), now);
     }
 
     // perform a reset if a certain number of bins were missed (application limited case).
     // non-application-limited delay will trigger a protocol reset if in-flight packets
     // are not acked (typical case, not handled by us).
     if (((now - *bin_end) / *bin_time) >= QUICLY_SEARCH_RESET_LIMIT) {
-        ss_search_reset(cc, loss, bytes + SEARCH_BIN(delv, *bin_rounds), now);
+        ss_search_reset(cc, loss, (bytes >> *bin_bitshifts) + SEARCH_BIN(delv, *bin_rounds), now);
         
     }
 
@@ -144,13 +147,24 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
         *bin_rounds += 1;
     }
 
+    // check if the cummulation of acked bytes will overflow the bin
+    while((SEARCH_BIN(delv, *bin_rounds) + (bytes >> *bin_bitshifts)) < SEARCH_BIN(delv, *bin_rounds)) {
+        // calculate the maximum number of rounds that should be performed to shift all relevant bins
+        int cycles = (*bin_rounds > QUICLY_SEARCH_TOTAL_BIN_COUNT) ? QUICLY_SEARCH_TOTAL_BIN_COUNT : *bin_rounds;
+        for(int i = *bin_rounds; i > *bin_rounds - cycles; i--) {
+            // shift each bin
+            SEARCH_BIN(delv, i) = SEARCH_BIN(delv, i) >> 1;
+        }
+        *bin_bitshifts += 1;
+    }
+
     // fill latest bin with latest acknowledged bytes
     // TCP implementation has a method of tracking total delivered bytes to avoid this per-packet
     // computation, but we aren't doing that (yet). loss->total_bytes_sent looks interesting, but
     // does not seem to guarantee a match with conn->egress.max_data.sent (see loss.c)
     //
     // we include a right-bitshift to reduce the amount of data being stored in the bin
-    SEARCH_BIN(delv, *bin_rounds) += bytes;
+    SEARCH_BIN(delv, *bin_rounds) += (bytes >> *bin_bitshifts);
 
     // perform standard SS doubling
     cc->cwnd += bytes;

@@ -88,6 +88,10 @@ typedef struct st_quicly_cc_t {
              * start trying to watch for congestion
              */
             uint16_t bin_rounds;
+            /**
+             * Holds the number of bitshifts to perform before adding a byteset to a bin
+             */
+            uint8_t bin_bitshift;
         } search;
     } ss_state;
     /**
