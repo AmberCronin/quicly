@@ -147,13 +147,19 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
                 shift_delv_sum *= 2;
                 double normalized_diff = (shift_delv_sum - delv_sum) / shift_delv_sum;
                 if (normalized_diff > QUICLY_SEARCH_THRESH) {
-                    // exit slow start
-                    // TODO: Proposal to lower cwnd by tracked previously sent bytes
-                    if (cc->cwnd_maximum < cc->cwnd)
-                        cc->cwnd_maximum = cc->cwnd;
-                    cc->ssthresh = cc->cwnd;
+                    // exit slow start by setting ssthresh
+                    // lower cwnd by number of delivered bytes in the previous RTT
+                    uint32_t cwnd_overshoot = SEARCH_BIN(delv, *bin_rounds) - SEARCH_BIN(delv, *bin_rounds - 3);
+                    uint32_t final_cwnd = cc->cwnd + bytes - cwnd_overshoot;
+
+                    cc->cwnd = final_cwnd;
+                    cc->ssthresh = final_cwnd;
                     cc->cwnd_exiting_slow_start = cc->cwnd;
                     cc->exit_slow_start_at = now;
+
+                    if (cc->cwnd_maximum < cc->cwnd) {
+                        cc->cwnd_maximum = cc->cwnd;
+                    }
                     return;
                 }
             }
