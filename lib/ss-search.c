@@ -66,6 +66,11 @@ void ss_search_reset(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes,
 
 #define SEARCH_BIN(delv, index) (delv[(index) % (QUICLY_SEARCH_TOTAL_BIN_COUNT)])
 
+double y0(double x0, double x2, double y1, double y2) {
+    double m = (y2 - y1) / (x2 - 0);
+    return (m * (x0 - 0)) + y1;
+}
+
 // bytes is the number of bytes acked in the last ACK frame
 // inflight is sentmap->bytes_in_flight + bytes
 void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
@@ -91,17 +96,6 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
         
     }
 
-    // bin_shift is the number of bins to shift backwards, based on the latest RTT
-    uint8_t bin_shift = loss->rtt.latest / *bin_time;
-    if(bin_shift == 0) {
-        // shift at least one bin
-        bin_shift = 1;
-    }
-    else if(loss->rtt.latest % *bin_time > (*bin_time / 2)) {
-        // round to the nearest bin (not doing interpolation yet)
-        bin_shift++;
-    }
-
     // perform prior binrolls before updating the latest bin to run SEARCH on if necessary
     while((now - *bin_time) > (*bin_end)) {
         // initialize the next bin with the final value of the previous
@@ -115,13 +109,37 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
         // bin_rounds tracks how many times we've rolled over, and a single window is the entire
         // delivered bin count (because of the definition of how bin_time is calculated)
         // thus, the number of rounds must be >= than the delv bin count + the bin shift
+
+        // bin_shift is the number of bins to shift backwards, based on the latest RTT
+        uint8_t bin_shift = loss->rtt.latest / *bin_time;
+        uint32_t bin_shift_frac = loss->rtt.latest % *bin_time;
+
+        if(bin_shift == 0) {
+            // shift at least one bin
+            bin_shift = 1;
+            bin_shift_frac = 0;
+        }
+        
+        // we actually need (QUICLY_SEARCH_DELV_BIN_COUNT + 1) bins because of the fractional usage
         if((*bin_rounds) >= ((QUICLY_SEARCH_DELV_BIN_COUNT) + bin_shift)
-            && bin_shift < (QUICLY_SEARCH_TOTAL_BIN_COUNT - QUICLY_SEARCH_DELV_BIN_COUNT)) {
+            && bin_shift < (QUICLY_SEARCH_TOTAL_BIN_COUNT - QUICLY_SEARCH_DELV_BIN_COUNT - 1)) {
             // do SEARCH
-            double shift_delv_sum = SEARCH_BIN(delv, *bin_rounds - bin_shift) \
-                - SEARCH_BIN(delv, *bin_rounds - bin_shift - QUICLY_SEARCH_DELV_BIN_COUNT);
-            double delv_sum = SEARCH_BIN(delv, *bin_rounds) \
-                - SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT);
+            double shift_delv_front = y0(bin_shift_frac, *bin_time,                             \
+                SEARCH_BIN(delv, *bin_rounds - bin_shift - 1),                                  \
+                SEARCH_BIN(delv, *bin_rounds - bin_shift));
+            double shift_delv_back = y0(bin_shift_frac, *bin_time,                              \
+                SEARCH_BIN(delv, *bin_rounds - bin_shift - QUICLY_SEARCH_DELV_BIN_COUNT - 1),   \
+                SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT - bin_shift));
+            
+            double delv_front = y0(bin_shift_frac, *bin_time,                                   \
+                SEARCH_BIN(delv, *bin_rounds - 1),                                              \
+                SEARCH_BIN(delv, *bin_rounds));
+            double delv_back = y0(bin_shift_frac, *bin_time,                                    \
+                SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT - 1),               \
+                SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT));
+            
+            double shift_delv_sum = shift_delv_front - shift_delv_back;
+            double delv_sum = delv_front - delv_back;
 
             if (shift_delv_sum >= 1) {
                 shift_delv_sum *= 2;
