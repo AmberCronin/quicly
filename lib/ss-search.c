@@ -113,33 +113,35 @@ void ss_search(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint6
         // bin_shift is the number of bins to shift backwards, based on the latest RTT
         uint8_t bin_shift = loss->rtt.latest / *bin_time;
         uint32_t bin_shift_frac = loss->rtt.latest % *bin_time;
-
-        if(bin_shift == 0) {
-            // shift at least one bin
-            bin_shift = 1;
-            bin_shift_frac = 0;
-        }
         
         // we actually need (QUICLY_SEARCH_DELV_BIN_COUNT + 1) bins because of the fractional usage
         if((*bin_rounds) >= ((QUICLY_SEARCH_DELV_BIN_COUNT) + bin_shift)
             && bin_shift < (QUICLY_SEARCH_TOTAL_BIN_COUNT - QUICLY_SEARCH_DELV_BIN_COUNT - 1)) {
             // do SEARCH
-            double shift_delv_front = y0(bin_shift_frac, *bin_time,                             \
-                SEARCH_BIN(delv, *bin_rounds - bin_shift - 1),                                  \
-                SEARCH_BIN(delv, *bin_rounds - bin_shift));
-            double shift_delv_back = y0(bin_shift_frac, *bin_time,                              \
-                SEARCH_BIN(delv, *bin_rounds - bin_shift - QUICLY_SEARCH_DELV_BIN_COUNT - 1),   \
-                SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT - bin_shift));
-            
-            double delv_front = y0(bin_shift_frac, *bin_time,                                   \
-                SEARCH_BIN(delv, *bin_rounds - 1),                                              \
-                SEARCH_BIN(delv, *bin_rounds));
-            double delv_back = y0(bin_shift_frac, *bin_time,                                    \
-                SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT - 1),               \
-                SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT));
-            
-            double shift_delv_sum = shift_delv_front - shift_delv_back;
-            double delv_sum = delv_front - delv_back;
+            double shift_delv_sum, delv_sum;
+            if (bin_shift_frac) {
+                double shift_delv_front = y0(bin_shift_frac, *bin_time,                             \
+                    SEARCH_BIN(delv, *bin_rounds - bin_shift - 1),                                  \
+                    SEARCH_BIN(delv, *bin_rounds - bin_shift));
+                double shift_delv_back = y0(bin_shift_frac, *bin_time,                              \
+                    SEARCH_BIN(delv, *bin_rounds - bin_shift - QUICLY_SEARCH_DELV_BIN_COUNT - 1),   \
+                    SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT - bin_shift));
+                
+                double delv_front = y0(bin_shift_frac, *bin_time,                                   \
+                    SEARCH_BIN(delv, *bin_rounds - 1),                                              \
+                    SEARCH_BIN(delv, *bin_rounds));
+                double delv_back = y0(bin_shift_frac, *bin_time,                                    \
+                    SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT - 1),               \
+                    SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT));
+                shift_delv_sum = shift_delv_front - shift_delv_back;
+                delv_sum = delv_front - delv_back;
+            }
+            else {
+                shift_delv_sum = SEARCH_BIN(delv, *bin_rounds - bin_shift) -                        \
+                    SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT - bin_shift);
+                delv_sum = SEARCH_BIN(delv, *bin_rounds) -                                          \
+                    SEARCH_BIN(delv, *bin_rounds - QUICLY_SEARCH_DELV_BIN_COUNT);
+            }
 
             if (shift_delv_sum >= 1) {
                 shift_delv_sum *= 2;
