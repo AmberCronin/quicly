@@ -272,6 +272,14 @@ typedef struct st_quicly_transport_parameters_t {
     uint16_t max_datagram_frame_size;
 } quicly_transport_parameters_t;
 
+typedef struct st_quicly_salt_t {
+    uint8_t initial[20];
+    struct {
+        uint8_t key[PTLS_AES128_KEY_SIZE];
+        uint8_t iv[PTLS_AESGCM_IV_SIZE];
+    } retry;
+} quicly_salt_t;
+
 struct st_quicly_context_t {
     /**
      * tls context to use
@@ -483,9 +491,29 @@ struct st_quicly_conn_streamgroup_state_t {
          */                                                                                                                        \
         uint64_t late_acked;                                                                                                       \
         /**                                                                                                                        \
-         * Total number of Initial and Handshake packets sent.                                                                     \
+         * Total number of Initial packets received.                                                                               \
          */                                                                                                                        \
-        uint64_t initial_handshake_sent;                                                                                           \
+        uint64_t initial_received;                                                                                                 \
+        /**                                                                                                                        \
+         * Total number of 0-RTT packets received.                                                                                 \
+         */                                                                                                                        \
+        uint64_t zero_rtt_received;                                                                                                \
+        /**                                                                                                                        \
+         * Total number of Handshake packets received.                                                                             \
+         */                                                                                                                        \
+        uint64_t handshake_received;                                                                                               \
+        /**                                                                                                                        \
+         * Total number of Initial packets sent.                                                                                   \
+         */                                                                                                                        \
+        uint64_t initial_sent;                                                                                                     \
+        /**                                                                                                                        \
+         * Total number of 0-RTT packets sent.                                                                                     \
+         */                                                                                                                        \
+        uint64_t zero_rtt_sent;                                                                                                    \
+        /**                                                                                                                        \
+         * Total number of Handshake packets sent.                                                                                 \
+         */                                                                                                                        \
+        uint64_t handshake_sent;                                                                                                   \
         /**                                                                                                                        \
          * Total number of packets received out of order.                                                                          \
          */                                                                                                                        \
@@ -1166,6 +1194,15 @@ int quicly_receive(quicly_conn_t *conn, struct sockaddr *dest_addr, struct socka
  */
 int quicly_is_destination(quicly_conn_t *conn, struct sockaddr *dest_addr, struct sockaddr *src_addr,
                           quicly_decoded_packet_t *decoded);
+/**
+ * returns salts given version
+ */
+const quicly_salt_t *quicly_get_salt(uint32_t protocol_version);
+/**
+ *
+ */
+int quicly_calc_initial_keys(ptls_cipher_suite_t *cs, uint8_t *ingress, uint8_t *egress, ptls_iovec_t cid, int is_client,
+                             ptls_iovec_t salt);
 /**
  *
  */

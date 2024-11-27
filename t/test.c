@@ -305,7 +305,7 @@ static void test_vector(void)
     ok(off == sizeof(datagram));
 
     /* decrypt */
-    const struct st_ptls_salt_t *salt = get_salt(QUICLY_PROTOCOL_VERSION_DRAFT29);
+    const quicly_salt_t *salt = quicly_get_salt(QUICLY_PROTOCOL_VERSION_DRAFT29);
     ret = setup_initial_encryption(&ptls_openssl_aes128gcmsha256, &ingress, &egress, packet.cid.dest.encrypted, 0,
                                    ptls_iovec_init(salt->initial, sizeof(salt->initial)), NULL);
     ok(ret == 0);
