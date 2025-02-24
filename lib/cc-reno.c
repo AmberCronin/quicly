@@ -144,6 +144,7 @@ quicly_cc_type_t quicly_cc_type_reno = {"reno",
                                         reno_on_switch,
                                         &quicly_default_ss,
                                         quicly_cc_jumpstart_enter};
+
 quicly_init_cc_t quicly_cc_reno_init = {reno_init};
 
 quicly_cc_type_t *quicly_cc_all_types[] = {&quicly_cc_type_reno, &quicly_cc_type_cubic, &quicly_cc_type_pico, NULL};

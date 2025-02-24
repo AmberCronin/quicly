@@ -38,6 +38,11 @@ extern "C" {
  */
 typedef struct st_quicly_ss_type_t quicly_ss_type_t;
 
+extern bool search_exit;
+
+#define MIN(x,y) ((x > y) ? (y) : (x))
+#define MAX(x,y) ((x < y) ? (y) : (x))
+
 struct st_quicly_ss_type_t {
     const char* name;
     void (*ss)(quicly_cc_t *cc, const quicly_loss_t *loss, uint32_t bytes, uint64_t largest_acked, uint32_t inflight,
