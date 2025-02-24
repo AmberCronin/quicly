@@ -62,11 +62,6 @@ SET(QUICLY_LIBRARY_FILES
     lib/retire_cid.c
     lib/sendstate.c
     lib/ss-rfc2001.c
-<<<<<<< HEAD
-=======
-    lib/ss-hybla.c
-    lib/ss-hystart.c
->>>>>>> 2024_04_22_merge
     lib/ss-search.c
     lib/sentmap.c
     lib/streambuf.c
